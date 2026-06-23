@@ -1,36 +1,48 @@
 <script setup>
 import { computed, ref, onMounted, watch } from 'vue';
-import { Search, AlertTriangle, Clock, MapPin, BarChart3, Bot, Sparkles, TrendingUp, Activity, Zap } from '@lucide/vue';
-import { mockHotspots } from '../mockData';
+import { Search, AlertTriangle, Clock, MapPin, BarChart3, Bot, Sparkles, TrendingUp, Activity, Zap, Shield } from '@lucide/vue';
+import { mockHotspots, globalStats, hourlyTrend, meta } from '../mockData';
 
-const props = defineProps({
-  timeOffset: { type: Number, default: 0 }
-});
+const props = defineProps({ timeOffset: { type: Number, default: 0 } });
 const emit = defineEmits(['select-hotspot', 'update:time-offset']);
 
 const searchQuery = ref('');
-const selectedSeverity = ref('all'); // filter: all, critical, high, medium
+const selectedSeverity = ref('all');
+
+// Risk score calculation (rises with timeOffset)
+const riskScore = (hs) => Math.min(100, hs.riskScore + Math.round(props.timeOffset * 1.5));
 
 const sortedHotspots = computed(() => {
   let filtered = mockHotspots;
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase();
-    filtered = mockHotspots.filter(hs => hs.name.toLowerCase().includes(q) || hs.type.toLowerCase().includes(q));
+    filtered = mockHotspots.filter(hs =>
+      hs.name.toLowerCase().includes(q) ||
+      hs.type.toLowerCase().includes(q) ||
+      (hs.station || '').toLowerCase().includes(q) ||
+      (hs.topJunction || '').toLowerCase().includes(q)
+    );
   }
   if (selectedSeverity.value !== 'all') {
     filtered = filtered.filter(hs => hs.severity.toLowerCase() === selectedSeverity.value);
   }
   return filtered.map(hs => ({
     ...hs,
-    delayMinutes: hs.delayMinutes + Math.floor(props.timeOffset * 2.5)
+    delayMinutes: hs.delayMinutes + Math.floor(props.timeOffset * 2.5),
+    displayRisk: riskScore(hs),
   })).sort((a, b) => b.violationCount - a.violationCount);
 });
 
 const cityStats = computed(() => ({
-  total: sortedHotspots.value.reduce((s, h) => s + h.violationCount, 0),
+  total: globalStats.totalViolations.toLocaleString('en-IN'),
   avgDelay: Math.round(sortedHotspots.value.reduce((s, h) => s + h.delayMinutes, 0) / (sortedHotspots.value.length || 1)),
   critical: sortedHotspots.value.filter(h => h.severity === 'Critical').length,
+  conviction: globalStats.convictionRate,
 }));
+
+// Hourly heatmap data (real)
+const peakHour = meta.peakHour;
+const hourlyMax = Math.max(...hourlyTrend.map(h => h.count));
 
 // AI Insights
 const aiInsightText = ref('');
@@ -43,38 +55,37 @@ const generateInsight = () => {
   aiInsightText.value = '';
 
   const topHs = sortedHotspots.value[0];
-  if (!topHs) return;
+  if (!topHs) { isGenerating.value = false; return; }
 
-  const timeContext = props.timeOffset === 0 ? 'currently' : `in +${props.timeOffset}h`;
+  const peakLabel = `${peakHour.toString().padStart(2,'0')}:00–${(peakHour+1).toString().padStart(2,'0')}:00`;
+  const timeContext = props.timeOffset === 0 ? 'currently' : `in +${props.timeOffset}h forecast`;
+
   const messages = [
-    `🔍 Scanning ${sortedHotspots.value.length} active zones across Bengaluru...`,
-    `⚠️ ${topHs.name} is the highest-risk zone ${timeContext} with ${topHs.violationCount.toLocaleString('en-IN')} violations recorded.`,
-    `🚓 Recommend immediate deployment of enforcement units to ${topHs.name}. Primary offence: ${topHs.type}.`,
+    `🔍 Scanning ${sortedHotspots.value.length} active enforcement zones across Bengaluru...`,
+    `⚠️  #1 Risk Zone ${timeContext}: ${topHs.name} · ${topHs.violationCount.toLocaleString('en-IN')} violations · Risk ${topHs.displayRisk}/100`,
+    `⏰  City-wide peak violation window: ${peakLabel} (${meta.peakHourCount.toLocaleString('en-IN')} incidents). Deploy enforcement at ${(peakHour - 1).toString().padStart(2,'0')}:30 for maximum impact.`,
     props.timeOffset > 0
-      ? `📈 Predictive model indicates ${Math.round(props.timeOffset * 12)}% congestion increase over the next ${props.timeOffset} hours if no action is taken.`
-      : `✅ Maintaining current monitoring. City-wide average delay: +${cityStats.value.avgDelay} minutes.`
+      ? `📈  Predictive model: congestion will increase ~${Math.round(props.timeOffset * 12)}% over next ${props.timeOffset}h if no intervention at top-3 zones.`
+      : `🛡️  City-wide conviction rate: ${globalStats.convictionRate}% · ${(298450 - meta.approvedCount).toLocaleString('en-IN')} violations still pending action.`,
   ];
 
-  let msgIndex = 0;
-  let charIndex = 0;
+  let mi = 0, ci = 0;
   const typeChar = () => {
-    if (msgIndex >= messages.length) { isGenerating.value = false; return; }
-    if (charIndex === 0 && msgIndex > 0) aiInsightText.value += '\n\n';
-    if (charIndex < messages[msgIndex].length) {
-      aiInsightText.value += messages[msgIndex].charAt(charIndex);
-      charIndex++;
-      typingTimeout = setTimeout(typeChar, 15 + Math.random() * 20);
-    } else {
-      msgIndex++; charIndex = 0;
-      typingTimeout = setTimeout(typeChar, 400);
-    }
+    if (mi >= messages.length) { isGenerating.value = false; return; }
+    if (ci === 0 && mi > 0) aiInsightText.value += '\n\n';
+    if (ci < messages[mi].length) {
+      aiInsightText.value += messages[mi].charAt(ci);
+      ci++;
+      typingTimeout = setTimeout(typeChar, 12 + Math.random() * 18);
+    } else { mi++; ci = 0; typingTimeout = setTimeout(typeChar, 350); }
   };
-  typingTimeout = setTimeout(typeChar, 300);
+  typingTimeout = setTimeout(typeChar, 200);
 };
 
 onMounted(() => generateInsight());
-watch(() => props.timeOffset, () => { generateInsight(); });
-watch(searchQuery, () => { generateInsight(); });
+watch(() => props.timeOffset, () => generateInsight());
+watch(searchQuery, () => generateInsight());
+watch(selectedSeverity, () => generateInsight());
 </script>
 
 <template>
@@ -83,129 +94,140 @@ watch(searchQuery, () => { generateInsight(); });
     <div class="sidebar-header">
       <div class="flex-row items-center gap-3">
         <div class="sidebar-logo-icon">
-          <MapPin size="16" stroke-width="2.5" />
+          <MapPin size="15" stroke-width="2.5" />
         </div>
         <div>
-          <h1 class="sidebar-title">Gridlock<span class="highlight-text">AI</span></h1>
-          <p class="sidebar-subtitle">Traffic Intelligence Dashboard</p>
+          <h1 class="sidebar-title">Gridlock<span class="accent-text">AI</span></h1>
+          <p class="sidebar-sub">Traffic Intelligence · Bengaluru</p>
         </div>
       </div>
       <div class="status-pill">
-        <span class="status-dot"></span>
-        Live
+        <span class="status-dot"></span> LIVE
       </div>
     </div>
 
-    <!-- Scrollable content -->
-    <div class="sidebar-scroll-area">
+    <div class="sidebar-scroll">
 
-      <!-- City Overview Stats -->
-      <div class="section-block">
+      <!-- City Stats Grid -->
+      <div class="section-pad">
         <div class="section-label flex-row items-center gap-2 mb-2">
-          <Activity size="12" />
-          <span>City Overview</span>
+          <Activity size="11" /><span>City Overview · Jan–May 2024</span>
         </div>
         <div class="stats-grid">
-          <div class="stat-tile stat-tile-danger">
-            <div class="stat-tile-icon"><AlertTriangle size="14" /></div>
-            <div class="stat-tile-val">{{ cityStats.total.toLocaleString('en-IN') }}</div>
-            <div class="stat-tile-label">Total Violations</div>
+          <div class="stat-tile tile-red">
+            <AlertTriangle size="13" />
+            <div class="stat-val">{{ cityStats.total }}</div>
+            <div class="stat-lbl">Total Violations</div>
           </div>
-          <div class="stat-tile stat-tile-warning">
-            <div class="stat-tile-icon"><Clock size="14" /></div>
-            <div class="stat-tile-val">+{{ cityStats.avgDelay }}m</div>
-            <div class="stat-tile-label">Avg. Delay</div>
+          <div class="stat-tile tile-yellow">
+            <Clock size="13" />
+            <div class="stat-val">+{{ cityStats.avgDelay }}m</div>
+            <div class="stat-lbl">Avg City Delay</div>
           </div>
-          <div class="stat-tile stat-tile-primary">
-            <div class="stat-tile-icon"><Zap size="14" /></div>
-            <div class="stat-tile-val">{{ cityStats.critical }}</div>
-            <div class="stat-tile-label">Critical Zones</div>
+          <div class="stat-tile tile-blue">
+            <Zap size="13" />
+            <div class="stat-val">{{ cityStats.critical }}</div>
+            <div class="stat-lbl">Critical Zones</div>
           </div>
-          <div class="stat-tile stat-tile-success">
-            <div class="stat-tile-icon"><TrendingUp size="14" /></div>
-            <div class="stat-tile-val">{{ sortedHotspots.length }}</div>
-            <div class="stat-tile-label">Zones Tracked</div>
+          <div class="stat-tile tile-green">
+            <Shield size="13" />
+            <div class="stat-val">{{ cityStats.conviction }}%</div>
+            <div class="stat-lbl">Conviction Rate</div>
           </div>
         </div>
       </div>
 
-      <div class="divider"></div>
+      <div class="divider" />
 
-      <!-- Search -->
-      <div class="section-block">
+      <!-- Search + Filter -->
+      <div class="section-pad">
         <div class="search-wrap">
-          <Search size="14" class="search-icon" />
-          <input 
-            type="text" 
-            v-model="searchQuery" 
-            placeholder="Search junctions, areas..."
-            class="search-input"
-          />
+          <Search size="13" class="search-icon-el" />
+          <input type="text" v-model="searchQuery" placeholder="Search junctions, areas, BTP codes..." class="search-inp" />
         </div>
-        <!-- Severity Filter Pills -->
-        <div class="filter-pills flex-row gap-2 mt-2">
-          <button 
-            v-for="f in ['all','critical','high','medium']" 
-            :key="f"
-            class="filter-pill"
-            :class="{ active: selectedSeverity === f, [`pill-${f}`]: true }"
+        <div class="filter-row mt-2">
+          <button v-for="f in ['all','critical','high','medium']" :key="f"
+            class="filter-btn"
+            :class="{ active: selectedSeverity === f, [`f-${f}`]: true }"
             @click="selectedSeverity = f"
           >
-            {{ f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1) }}
+            {{ f === 'all' ? 'All' : f[0].toUpperCase() + f.slice(1) }}
           </button>
         </div>
       </div>
 
-      <div class="divider"></div>
+      <div class="divider" />
 
       <!-- AI Insights -->
-      <div class="section-block">
-        <div class="section-label flex-row items-center justify-between mb-2">
+      <div class="section-pad">
+        <div class="ai-header flex-row items-center justify-between mb-2">
           <div class="flex-row items-center gap-2">
-            <Bot size="12" />
-            <span>Gridlock AI Assistant</span>
+            <Bot size="11" class="accent-text" />
+            <span class="section-label">Gridlock AI Assistant</span>
           </div>
-          <Sparkles v-if="isGenerating" size="12" class="sparkle-anim" />
+          <Sparkles v-if="isGenerating" size="11" class="accent-text spin-anim" />
         </div>
         <div class="ai-box">
-          <pre class="ai-text">{{ aiInsightText }}<span v-if="isGenerating" class="cursor">▋</span></pre>
+          <pre class="ai-text">{{ aiInsightText }}<span v-if="isGenerating" class="ai-cursor">▋</span></pre>
         </div>
       </div>
 
-      <div class="divider"></div>
+      <div class="divider" />
 
-      <!-- Predictive Model -->
-      <div class="section-block">
+      <!-- Peak Hour Chart (Real Data) -->
+      <div class="section-pad">
         <div class="flex-row justify-between items-center mb-2">
           <div class="section-label flex-row items-center gap-2">
-            <BarChart3 size="12" />
+            <BarChart3 size="11" /><span>Violations by Hour of Day</span>
+          </div>
+          <span class="badge badge-danger">Peak {{ meta.peakHourLabel }}</span>
+        </div>
+        <div class="hourly-chart">
+          <div
+            v-for="(h, i) in hourlyTrend"
+            :key="i"
+            class="h-bar-col"
+            :title="`${h.label}: ${h.count.toLocaleString('en-IN')} violations`"
+          >
+            <div
+              class="h-bar"
+              :class="{ 'h-bar-peak': i === peakHour, 'h-bar-near': Math.abs(i - peakHour) === 1 }"
+              :style="{ height: (h.count / hourlyMax * 100) + '%' }"
+            ></div>
+          </div>
+        </div>
+        <div class="hourly-labels flex-row justify-between">
+          <span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>11pm</span>
+        </div>
+      </div>
+
+      <div class="divider" />
+
+      <!-- Predictive Slider -->
+      <div class="section-pad">
+        <div class="flex-row justify-between items-center mb-2">
+          <div class="section-label flex-row items-center gap-2">
+            <TrendingUp size="11" />
             <span>Predictive Model — {{ timeOffset === 0 ? 'Live Now' : `+${timeOffset}h Forecast` }}</span>
           </div>
           <span v-if="timeOffset > 0" class="badge badge-warning">+{{ Math.round(timeOffset * 12) }}% Risk</span>
         </div>
-        <input
-          type="range"
-          min="0" max="12"
-          :value="timeOffset"
+        <input type="range" min="0" max="12" :value="timeOffset"
           @input="e => emit('update:time-offset', Number(e.target.value))"
           class="time-slider"
         />
         <div class="slider-labels flex-row justify-between">
-          <span>Now</span>
-          <span>+4h</span>
-          <span>+8h</span>
-          <span>+12h Forecast</span>
+          <span>Now</span><span>+4h</span><span>+8h</span><span>+12h</span>
         </div>
       </div>
 
-      <div class="divider"></div>
+      <div class="divider" />
 
-      <!-- Hotspots List -->
-      <div class="section-block hotspot-section">
+      <!-- Hotspot List -->
+      <div class="section-pad hotspot-section">
         <div class="section-label flex-row items-center justify-between mb-2">
           <div class="flex-row items-center gap-2">
-            <AlertTriangle size="12" />
-            <span>Priority Hotspots</span>
+            <AlertTriangle size="11" /><span>Priority Hotspots</span>
           </div>
           <span class="text-xs">{{ sortedHotspots.length }} zones</span>
         </div>
@@ -213,46 +235,39 @@ watch(searchQuery, () => { generateInsight(); });
           <div
             v-for="(hs, idx) in sortedHotspots"
             :key="hs.id"
-            class="hotspot-card glass-card"
+            class="hs-card glass-card"
             @click="emit('select-hotspot', hs)"
           >
-            <div class="hotspot-rank">#{{ idx + 1 }}</div>
-            <div class="hotspot-info flex-col flex-1">
-              <div class="flex-row items-center justify-between">
-                <span class="hotspot-name">{{ hs.name }}</span>
-                <span class="badge" :class="{
-                  'badge-danger': hs.severity === 'Critical',
-                  'badge-warning': hs.severity === 'High',
-                  'badge-info': hs.severity === 'Medium'
-                }">{{ hs.severity }}</span>
-              </div>
-              <div class="flex-row items-center justify-between mt-1">
-                <div class="flex-row items-center gap-2">
-                  <span class="hotspot-detail">{{ hs.violationCount.toLocaleString('en-IN') }} violations</span>
-                  <span class="hotspot-dot">·</span>
-                  <span class="hotspot-detail">{{ hs.type }}</span>
+            <div class="hs-rank mono">#{{ idx + 1 }}</div>
+            <div class="hs-body flex-col flex-1">
+              <div class="flex-row items-start justify-between gap-1">
+                <span class="hs-name">{{ hs.name }}</span>
+                <div class="flex-col items-end gap-1" style="flex-shrink:0">
+                  <span class="badge" :class="{
+                    'badge-danger': hs.severity === 'Critical',
+                    'badge-warning': hs.severity === 'High',
+                    'badge-info': hs.severity === 'Medium'
+                  }">{{ hs.severity }}</span>
+                  <span class="risk-chip" :class="{ 'risk-high': hs.displayRisk >= 70, 'risk-med': hs.displayRisk >= 40 && hs.displayRisk < 70 }">
+                    RS {{ hs.displayRisk }}
+                  </span>
                 </div>
-                <span class="delay-tag" :class="{ 'delay-high': hs.delayMinutes > 30 }">
-                  +{{ hs.delayMinutes }}m
-                </span>
               </div>
-              <!-- Mini bar -->
+              <!-- BTP Junction code if available -->
+              <div v-if="hs.topJunction" class="btp-code mono mt-1">{{ hs.topJunction }}</div>
+              <div class="flex-row items-center justify-between mt-1">
+                <span class="hs-detail">{{ hs.violationCount.toLocaleString('en-IN') }} violations · Peak {{ hs.peakHour.toString().padStart(2,'0') }}:00</span>
+                <span class="delay-chip" :class="{ 'delay-high': hs.delayMinutes > 30 }">+{{ hs.delayMinutes }}m</span>
+              </div>
               <div class="mini-bar mt-1">
-                <div 
-                  class="mini-bar-fill"
-                  :class="{
-                    'bar-danger': hs.severity === 'Critical',
-                    'bar-warning': hs.severity === 'High',
-                    'bar-info': hs.severity === 'Medium'
-                  }"
+                <div class="mini-fill"
+                  :class="{ 'fill-red': hs.severity === 'Critical', 'fill-yellow': hs.severity === 'High', 'fill-blue': hs.severity === 'Medium' }"
                   :style="{ width: Math.min((hs.violationCount / 35000) * 100, 100) + '%' }"
                 ></div>
               </div>
             </div>
           </div>
-          <div v-if="sortedHotspots.length === 0" class="no-results">
-            No hotspots match your search.
-          </div>
+          <div v-if="!sortedHotspots.length" class="no-results">No zones match your filter.</div>
         </div>
       </div>
 
@@ -261,314 +276,145 @@ watch(searchQuery, () => { generateInsight(); });
 </template>
 
 <style scoped>
-.sidebar {
-  width: 320px;
-  max-height: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+.sidebar { width: 320px; max-height: 100%; display: flex; flex-direction: column; overflow: hidden; }
 
 /* Header */
 .sidebar-header {
-  padding: 1rem 1.25rem;
+  padding: 0.875rem 1.125rem;
   border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between;
   flex-shrink: 0;
 }
-
 .sidebar-logo-icon {
+  width: 32px; height: 32px; border-radius: 9px;
   background: linear-gradient(135deg, rgba(79,142,245,0.2), rgba(155,108,247,0.2));
   border: 1px solid rgba(79,142,245,0.3);
-  border-radius: 10px;
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: flex; align-items: center; justify-content: center;
   color: var(--accent-primary);
 }
-
-.sidebar-title {
-  font-size: 1.05rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1;
-}
-.highlight-text { color: var(--accent-primary); }
-.sidebar-subtitle {
-  font-size: 0.62rem;
-  color: var(--text-muted);
-  margin-top: 2px;
-  letter-spacing: 0.02em;
-}
+.sidebar-title { font-size: 1rem; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+.accent-text { color: var(--accent-primary); }
+.sidebar-sub { font-size: 0.6rem; color: var(--text-muted); margin-top: 2px; letter-spacing: 0.02em; }
 
 .status-pill {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: rgba(52,211,153,0.1);
-  border: 1px solid rgba(52,211,153,0.25);
-  border-radius: 99px;
-  padding: 3px 10px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--status-success);
-  letter-spacing: 0.05em;
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.25);
+  border-radius: 99px; padding: 3px 9px;
+  font-size: 0.65rem; font-weight: 700; color: var(--status-success); letter-spacing: 0.06em;
 }
+.status-dot { width: 5px; height: 5px; background: var(--status-success); border-radius: 50%; animation: dot-blink 2s infinite; }
+@keyframes dot-blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
-.status-dot {
-  width: 5px;
-  height: 5px;
-  background: var(--status-success);
-  border-radius: 50%;
-  animation: blink-dot 2s infinite;
-}
-@keyframes blink-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
+/* Scroll */
+.sidebar-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
 
-/* Scroll area */
-.sidebar-scroll-area {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-}
+/* Section */
+.section-pad { padding: 0.875rem 1.125rem; }
+.section-label { font-size: 0.63rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); }
+.mt-2 { margin-top: 0.5rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mt-1 { margin-top: 0.25rem; }
 
-/* Section block */
-.section-block {
-  padding: 1rem 1.25rem;
-}
-
-.section-label {
-  font-size: 0.65rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-
-/* City Stats Grid */
-.stats-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.5rem;
-}
-
+/* Stats Grid */
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
 .stat-tile {
-  border-radius: var(--radius-md);
-  padding: 0.75rem;
-  border: 1px solid;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  border-radius: var(--radius-md); padding: 0.7rem;
+  border: 1px solid; display: flex; flex-direction: column; gap: 0.2rem;
 }
-.stat-tile-danger { background: rgba(248,113,113,0.06); border-color: rgba(248,113,113,0.2); }
-.stat-tile-danger .stat-tile-icon { color: var(--status-danger); }
-.stat-tile-danger .stat-tile-val { color: var(--status-danger); }
-
-.stat-tile-warning { background: rgba(251,191,36,0.06); border-color: rgba(251,191,36,0.2); }
-.stat-tile-warning .stat-tile-icon { color: var(--status-warning); }
-.stat-tile-warning .stat-tile-val { color: var(--status-warning); }
-
-.stat-tile-primary { background: rgba(79,142,245,0.06); border-color: rgba(79,142,245,0.2); }
-.stat-tile-primary .stat-tile-icon { color: var(--accent-primary); }
-.stat-tile-primary .stat-tile-val { color: var(--accent-primary); }
-
-.stat-tile-success { background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.2); }
-.stat-tile-success .stat-tile-icon { color: var(--status-success); }
-.stat-tile-success .stat-tile-val { color: var(--status-success); }
-
-.stat-tile-icon { display: flex; }
-.stat-tile-val { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
-.stat-tile-label { font-size: 0.65rem; color: var(--text-muted); font-weight: 500; }
+.tile-red { background: rgba(248,113,113,0.06); border-color: rgba(248,113,113,0.2); color: var(--status-danger); }
+.tile-yellow { background: rgba(251,191,36,0.06); border-color: rgba(251,191,36,0.2); color: var(--status-warning); }
+.tile-blue { background: rgba(79,142,245,0.06); border-color: rgba(79,142,245,0.2); color: var(--accent-primary); }
+.tile-green { background: rgba(52,211,153,0.06); border-color: rgba(52,211,153,0.2); color: var(--status-success); }
+.stat-val { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.02em; margin-top: 0.1rem; }
+.stat-lbl { font-size: 0.62rem; color: var(--text-muted); font-weight: 500; }
 
 /* Search */
-.search-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.search-icon {
-  position: absolute;
-  left: 0.75rem;
-  color: var(--text-muted);
-}
-.search-input {
-  width: 100%;
-  background: var(--bg-glass-light);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 0.6rem 1rem 0.6rem 2.25rem;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 0.875rem;
-  outline: none;
+.search-wrap { position: relative; display: flex; align-items: center; }
+.search-icon-el { position: absolute; left: 0.7rem; color: var(--text-muted); }
+.search-inp {
+  width: 100%; background: var(--bg-glass-light); border: 1px solid var(--border-color);
+  border-radius: var(--radius-md); padding: 0.55rem 0.875rem 0.55rem 2.1rem;
+  color: var(--text-primary); font-family: inherit; font-size: 0.82rem; outline: none;
   transition: all 0.2s;
 }
-.search-input:focus {
-  border-color: var(--border-accent);
-  background: rgba(79,142,245,0.05);
-  box-shadow: 0 0 0 3px rgba(79,142,245,0.1);
-}
-.search-input::placeholder { color: var(--text-muted); }
+.search-inp:focus { border-color: var(--border-accent); box-shadow: 0 0 0 3px rgba(79,142,245,0.1); }
+.search-inp::placeholder { color: var(--text-muted); }
 
-/* Filter pills */
-.filter-pills { flex-wrap: wrap; }
-.filter-pill {
-  padding: 3px 10px;
-  border-radius: 99px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  cursor: pointer;
-  border: 1px solid var(--border-color);
-  background: transparent;
-  color: var(--text-muted);
-  transition: all 0.2s;
-  letter-spacing: 0.02em;
+/* Filter */
+.filter-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.filter-btn {
+  padding: 2px 9px; border-radius: 99px; font-size: 0.67rem; font-weight: 600;
+  cursor: pointer; border: 1px solid var(--border-color);
+  background: transparent; color: var(--text-muted); transition: all 0.2s;
 }
-.filter-pill:hover { color: var(--text-primary); border-color: rgba(255,255,255,0.15); }
-.filter-pill.active.pill-all { background: rgba(79,142,245,0.15); color: var(--accent-primary); border-color: rgba(79,142,245,0.4); }
-.filter-pill.active.pill-critical { background: var(--status-danger-dim); color: var(--status-danger); border-color: rgba(248,113,113,0.4); }
-.filter-pill.active.pill-high { background: var(--status-warning-dim); color: var(--status-warning); border-color: rgba(251,191,36,0.4); }
-.filter-pill.active.pill-medium { background: rgba(79,142,245,0.1); color: var(--accent-primary); border-color: rgba(79,142,245,0.3); }
+.filter-btn:hover { color: var(--text-primary); }
+.filter-btn.active.f-all { background: rgba(79,142,245,0.15); color: var(--accent-primary); border-color: rgba(79,142,245,0.4); }
+.filter-btn.active.f-critical { background: var(--status-danger-dim); color: var(--status-danger); border-color: rgba(248,113,113,0.4); }
+.filter-btn.active.f-high { background: var(--status-warning-dim); color: var(--status-warning); border-color: rgba(251,191,36,0.4); }
+.filter-btn.active.f-medium { background: rgba(79,142,245,0.1); color: var(--accent-primary); border-color: rgba(79,142,245,0.3); }
 
 /* AI Box */
-.ai-box {
-  background: rgba(79,142,245,0.05);
-  border: 1px solid rgba(79,142,245,0.15);
-  border-radius: var(--radius-md);
-  padding: 0.75rem;
-  max-height: 140px;
-  overflow-y: auto;
-}
-.ai-text {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-.cursor {
-  color: var(--accent-primary);
-  animation: blink 1s step-start infinite;
-}
-@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.ai-box { background: rgba(79,142,245,0.04); border: 1px solid rgba(79,142,245,0.15); border-radius: var(--radius-md); padding: 0.7rem; max-height: 130px; overflow-y: auto; }
+.ai-text { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-secondary); line-height: 1.65; white-space: pre-wrap; }
+.ai-cursor { color: var(--accent-primary); animation: blink 1s step-start infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+.spin-anim { animation: spin 2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-.sparkle-anim {
-  color: var(--accent-primary);
-  animation: spin 2s linear infinite;
+/* Hourly chart */
+.hourly-chart {
+  display: flex; align-items: flex-end; gap: 1.5px;
+  height: 56px; background: var(--bg-glass-light);
+  border: 1px solid var(--border-color); border-radius: var(--radius-sm);
+  padding: 4px 4px 0;
 }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.h-bar-col { flex: 1; display: flex; align-items: flex-end; height: 100%; cursor: pointer; }
+.h-bar { width: 100%; border-radius: 1px 1px 0 0; background: rgba(79,142,245,0.4); transition: background 0.2s; min-height: 1px; }
+.h-bar:hover { background: rgba(79,142,245,0.8); }
+.h-bar.h-bar-peak { background: var(--status-danger) !important; box-shadow: 0 0 6px rgba(248,113,113,0.6); }
+.h-bar.h-bar-near { background: rgba(251,191,36,0.7) !important; }
+.hourly-labels { font-size: 0.58rem; color: var(--text-muted); margin-top: 3px; }
 
-/* Predictive Slider */
-.time-slider {
-  -webkit-appearance: none;
-  width: 100%;
-  height: 4px;
-  background: linear-gradient(to right, var(--accent-primary) 0%, rgba(255,255,255,0.1) 0%);
-  border-radius: 2px;
-  outline: none;
-  cursor: pointer;
-}
-.time-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  cursor: pointer;
-  box-shadow: 0 0 10px rgba(79,142,245,0.6);
-  transition: transform 0.15s;
-}
+/* Slider */
+.time-slider { -webkit-appearance: none; width: 100%; height: 3px; background: rgba(255,255,255,0.08); border-radius: 99px; outline: none; cursor: pointer; }
+.time-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary)); cursor: pointer; box-shadow: 0 0 8px rgba(79,142,245,0.6); transition: transform 0.15s; }
 .time-slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
-.slider-labels {
-  font-size: 0.62rem;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
+.slider-labels { font-size: 0.58rem; color: var(--text-muted); margin-top: 3px; }
 
-/* Hotspot section */
+/* Hotspot list */
 .hotspot-section { padding-bottom: 1.5rem; }
-.hotspot-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
+.hotspot-list { display: flex; flex-direction: column; gap: 0.45rem; }
+.hs-card { padding: 0.7rem; cursor: pointer; display: flex; gap: 0.5rem; align-items: flex-start; }
+.hs-card:hover { border-color: rgba(79,142,245,0.35) !important; }
+.hs-rank { font-size: 0.62rem; font-weight: 700; color: var(--text-muted); padding-top: 1px; min-width: 16px; font-family: var(--font-mono); }
+.hs-name { font-size: 0.82rem; font-weight: 600; color: var(--text-primary); line-height: 1.2; }
 
-.hotspot-card {
-  padding: 0.75rem;
-  cursor: pointer;
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
-  gap: 0.6rem;
+.risk-chip {
+  font-size: 0.6rem; font-weight: 700; font-family: var(--font-mono);
+  padding: 1px 5px; border-radius: 4px;
+  background: rgba(79,142,245,0.1); color: var(--accent-primary);
+  border: 1px solid rgba(79,142,245,0.25);
 }
-.hotspot-card:hover { border-color: var(--border-accent); }
+.risk-chip.risk-high { background: rgba(248,113,113,0.12); color: var(--status-danger); border-color: rgba(248,113,113,0.3); }
+.risk-chip.risk-med { background: rgba(251,191,36,0.1); color: var(--status-warning); border-color: rgba(251,191,36,0.25); }
 
-.hotspot-rank {
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  padding-top: 2px;
-  min-width: 18px;
-}
+.btp-code { font-size: 0.62rem; font-family: var(--font-mono); color: var(--accent-cyan); background: rgba(34,211,238,0.07); border: 1px solid rgba(34,211,238,0.18); border-radius: 4px; padding: 1px 5px; display: inline-block; }
 
-.hotspot-name {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.2;
-}
+.hs-detail { font-size: 0.67rem; color: var(--text-muted); }
+.delay-chip { font-size: 0.67rem; font-weight: 700; font-family: var(--font-mono); background: var(--status-success-dim); color: var(--status-success); border: 1px solid rgba(52,211,153,0.2); padding: 1px 5px; border-radius: 99px; flex-shrink: 0; }
+.delay-chip.delay-high { background: var(--status-warning-dim); color: var(--status-warning); border-color: rgba(251,191,36,0.2); }
 
-.hotspot-detail {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-}
-.hotspot-dot { color: var(--text-muted); font-size: 0.7rem; }
+.mini-bar { height: 2px; background: rgba(255,255,255,0.05); border-radius: 99px; overflow: hidden; width: 100%; }
+.mini-fill { height: 100%; border-radius: 99px; transition: width 0.5s; }
+.fill-red { background: linear-gradient(to right, var(--status-danger), #fb923c); }
+.fill-yellow { background: linear-gradient(to right, var(--status-warning), #f97316); }
+.fill-blue { background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary)); }
 
-.delay-tag {
-  font-size: 0.7rem;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--status-success);
-  background: var(--status-success-dim);
-  border: 1px solid rgba(52,211,153,0.2);
-  padding: 1px 6px;
-  border-radius: 99px;
-}
-.delay-tag.delay-high {
-  color: var(--status-warning);
-  background: var(--status-warning-dim);
-  border-color: rgba(251,191,36,0.2);
-}
+.no-results { text-align: center; font-size: 0.78rem; color: var(--text-muted); padding: 2rem 0; }
+.mono { font-family: var(--font-mono); }
 
-/* Mini progress bar */
-.mini-bar {
-  width: 100%;
-  height: 2px;
-  background: rgba(255,255,255,0.05);
-  border-radius: 99px;
-  overflow: hidden;
-}
-.mini-bar-fill {
-  height: 100%;
-  border-radius: 99px;
-  transition: width 0.5s ease;
-}
-.bar-danger { background: linear-gradient(to right, var(--status-danger), #fb923c); }
-.bar-warning { background: linear-gradient(to right, var(--status-warning), #f97316); }
-.bar-info { background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary)); }
-
-.no-results {
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  padding: 2rem 0;
-}
+/* Badge helpers */
+.badge-danger { background: var(--status-danger-dim); color: var(--status-danger); border: 1px solid rgba(248,113,113,0.25); }
+.badge-warning { background: var(--status-warning-dim); color: var(--status-warning); border: 1px solid rgba(251,191,36,0.25); }
+.badge-info { background: rgba(79,142,245,0.1); color: var(--accent-primary); border: 1px solid rgba(79,142,245,0.25); }
 </style>
