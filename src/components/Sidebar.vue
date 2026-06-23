@@ -84,7 +84,8 @@ watch(() => props.timeOffset, () => {
       <p class="text-small mt-1">Live Parking Congestion Monitor</p>
     </div>
 
-    <div class="global-stats p-4">
+    <div class="sidebar-content">
+      <div class="global-stats p-4">
       <div class="stat-card">
         <AlertTriangle size="16" class="text-danger" />
         <div>
@@ -163,6 +164,7 @@ watch(() => props.timeOffset, () => {
             {{ hs.delayMinutes }}m
           </div>
         </div>
+        </div>
       </div>
     </div>
   </div>
@@ -174,7 +176,14 @@ watch(() => props.timeOffset, () => {
   max-height: calc(100vh - 3rem);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-content {
+  flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .header {
@@ -327,9 +336,8 @@ watch(() => props.timeOffset, () => {
 }
 
 .hotspots-section {
-  flex: 1;
-  overflow: hidden;
   display: flex;
+  flex-direction: column;
   padding: 1rem 1.5rem 1.5rem;
 }
 
@@ -339,8 +347,9 @@ watch(() => props.timeOffset, () => {
 .font-semibold { font-weight: 600; }
 
 .hotspots-list {
-  overflow-y: auto;
-  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   padding-right: 0.5rem;
 }
 
