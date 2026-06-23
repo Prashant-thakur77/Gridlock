@@ -113,22 +113,16 @@ export async function generateDetailedPDF(hotspot, allHotspots) {
   const peakLabel = `${peakHour.toString().padStart(2,'0')}:00 – ${(peakHour+1).toString().padStart(2,'0')}:00`;
 
   const htmlContent = `
-  <!DOCTYPE html>
-  <html>
-  <head>
-    <meta charset="UTF-8">
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap');
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'Inter', sans-serif; background: ${COLORS.darkBg}; color: ${COLORS.text}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .page { width: 210mm; min-height: 297mm; padding: 0; position: relative; background: ${COLORS.darkBg}; page-break-after: always; }
-      .page:last-child { page-break-after: avoid; }
-      .mono { font-family: 'JetBrains Mono', monospace; }
-      h1, h2, h3 { letter-spacing: -0.02em; }
+      .pdf-container { font-family: 'Inter', sans-serif; background: ${COLORS.darkBg}; color: ${COLORS.text}; }
+      .pdf-container * { box-sizing: border-box; margin: 0; padding: 0; }
+      .pdf-container .page { width: 210mm; min-height: 297mm; padding: 0; position: relative; background: ${COLORS.darkBg}; page-break-after: always; }
+      .pdf-container .page:last-child { page-break-after: avoid; }
+      .pdf-container .mono { font-family: 'JetBrains Mono', monospace; }
+      .pdf-container h1, .pdf-container h2, .pdf-container h3 { letter-spacing: -0.02em; }
     </style>
-  </head>
-  <body>
-
+    <div class="pdf-container">
   <!-- ═══════════════════════════════════════════════ -->
   <!-- PAGE 1: COVER PAGE -->
   <!-- ═══════════════════════════════════════════════ -->
@@ -466,24 +460,19 @@ export async function generateDetailedPDF(hotspot, allHotspots) {
           For official use only. Report ID: GLA-${Date.now().toString(36).toUpperCase().slice(-8)}
         </div>
         <div style="font-size:7px;font-family:monospace;color:${COLORS.muted};">PAGE 4 of 4</div>
-      </div>
     </div>
   </div>
-
-  </body>
-  </html>
   `;
 
   // Create container — must be in viewport for html2canvas to capture correctly
   const container = document.createElement('div');
   container.style.cssText = [
-    'position:fixed',
+    'position:absolute',
     'top:0',
     'left:0',
     'width:794px',         // ≈ 210mm at 96dpi
-    'z-index:99999',
-    'pointer-events:none', // don't block interaction
-    'opacity:0.001',       // nearly invisible but fully rendered by browser
+    'z-index:-9999',       // keep it behind the app but visible to the browser
+    'pointer-events:none'  // don't block interaction
   ].join(';');
   container.innerHTML = htmlContent;
   document.body.appendChild(container);
