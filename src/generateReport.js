@@ -474,19 +474,39 @@ export async function generateDetailedPDF(hotspot, allHotspots) {
   </html>
   `;
 
-  // Create a hidden container, render HTML, then export
+  // Create container — must be in viewport for html2canvas to capture correctly
   const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;width:210mm;';
+  container.style.cssText = [
+    'position:fixed',
+    'top:0',
+    'left:0',
+    'width:794px',         // ≈ 210mm at 96dpi
+    'z-index:99999',
+    'pointer-events:none', // don't block interaction
+    'opacity:0.001',       // nearly invisible but fully rendered by browser
+  ].join(';');
   container.innerHTML = htmlContent;
   document.body.appendChild(container);
+
+  // Wait two animation frames so the browser fully lays out and paints the HTML
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  // Extra settle time for any inline reflows
+  await new Promise(resolve => setTimeout(resolve, 400));
 
   const opt = {
     margin: 0,
     filename: `Gridlock_AI_Incident_Report_${hotspot.name.replace(/\s+/g, '_')}_${now.toISOString().slice(0,10)}.pdf`,
     image: { type: 'jpeg', quality: 0.95 },
-    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#080c12', logging: false },
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: '#080c12',
+      logging: false,
+      windowWidth: 794,
+    },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak: { mode: ['css', 'legacy'] }
+    pagebreak: { mode: ['css', 'legacy'] },
   };
 
   try {
