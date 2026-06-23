@@ -1,14 +1,24 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import MapLayer from './components/MapLayer.vue';
 import Sidebar from './components/Sidebar.vue';
 import DetailsPanel from './components/DetailsPanel.vue';
+import AlertTicker from './components/AlertTicker.vue';
+import CommandStrip from './components/CommandStrip.vue';
+import ResourceCalculator from './components/ResourceCalculator.vue';
+import KeyboardHints from './components/KeyboardHints.vue';
 import { mockHotspots } from './mockData.js';
 
-// State
+// Core state
 const selectedHotspot = ref(null);
 const currentTimeOffset = ref(0);
 const enforcementActive = ref(false);
+
+// Phase 8 state
+const commandMode = ref(false);
+const patrolRoute = ref(false);
+const showResourceCalc = ref(false);
+const showKeyboardHints = ref(false);
 
 const handleHotspotSelect = (hotspot) => {
   selectedHotspot.value = hotspot;
@@ -19,14 +29,40 @@ const handleEnforcementToggle = (val) => {
   enforcementActive.value = val;
 };
 
-// Compute city-wide stats from real data
+// Stats
 const totalViolations = mockHotspots.reduce((sum, h) => sum + h.violationCount, 0);
 const criticalCount = mockHotspots.filter(h => h.severity === 'Critical').length;
-const now = new Date();
-const timeString = ref(now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
-setInterval(() => {
+const timeString = ref(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }));
+const clockInterval = setInterval(() => {
   timeString.value = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 }, 1000);
+
+// Keyboard shortcuts
+const handleKeydown = (e) => {
+  const tag = e.target.tagName.toLowerCase();
+  if (tag === 'input' || tag === 'textarea') return;
+
+  const key = e.key;
+  if (key >= '1' && key <= '9') {
+    const idx = parseInt(key) - 1;
+    if (mockHotspots[idx]) handleHotspotSelect(mockHotspots[idx]);
+  } else if (key === 'Escape') {
+    if (showResourceCalc.value) showResourceCalc.value = false;
+    else if (showKeyboardHints.value) showKeyboardHints.value = false;
+    else selectedHotspot.value = null;
+  } else if (key === 'c' || key === 'C') {
+    commandMode.value = !commandMode.value;
+  } else if (key === 'r' || key === 'R') {
+    patrolRoute.value = !patrolRoute.value;
+  } else if (key === 'p' || key === 'P') {
+    if (selectedHotspot.value) document.querySelector('.btn-pdf')?.click();
+  } else if (key === '?') {
+    showKeyboardHints.value = true;
+  }
+};
+
+onMounted(() => window.addEventListener('keydown', handleKeydown));
+onUnmounted(() => { window.removeEventListener('keydown', handleKeydown); clearInterval(clockInterval); });
 </script>
 
 <template>
@@ -80,21 +116,75 @@ setInterval(() => {
     </div>
 
     <!-- Glassmorphic Overlays -->
-    <div class="overlays-container">
-      <Sidebar 
-        :time-offset="currentTimeOffset" 
-        @update:time-offset="val => currentTimeOffset = val" 
-        @select-hotspot="handleHotspotSelect" 
+    <div class="overlays-container" :class="{ 'cmd-mode': commandMode }">
+      <Sidebar
+        v-if="!commandMode"
+        :time-offset="currentTimeOffset"
+        @update:time-offset="val => currentTimeOffset = val"
+        @select-hotspot="handleHotspotSelect"
       />
       <Transition name="panel-slide">
-        <DetailsPanel 
-          v-if="selectedHotspot" 
-          :hotspot="selectedHotspot" 
+        <DetailsPanel
+          v-if="selectedHotspot && !commandMode"
+          :hotspot="selectedHotspot"
           :enforcement-active="enforcementActive"
           @toggle-enforcement="handleEnforcementToggle"
-          @close="selectedHotspot = null" 
+          @close="selectedHotspot = null"
         />
       </Transition>
+    </div>
+
+    <!-- Command Strip (command mode) -->
+    <Transition name="strip-slide">
+      <CommandStrip
+        v-if="commandMode"
+        :selected-hotspot="selectedHotspot"
+        @select-hotspot="handleHotspotSelect"
+      />
+    </Transition>
+
+    <!-- Alert Ticker -->
+    <AlertTicker @select-hotspot="handleHotspotSelect" />
+
+    <!-- Resource Calculator Modal -->
+    <Transition name="modal-fade">
+      <ResourceCalculator v-if="showResourceCalc" @close="showResourceCalc = false" />
+    </Transition>
+
+    <!-- Keyboard Hints -->
+    <Transition name="modal-fade">
+      <KeyboardHints v-if="showKeyboardHints" @close="showKeyboardHints = false" />
+    </Transition>
+
+    <!-- Action toolbar buttons (top-right) -->
+    <div class="toolbar-actions">
+      <button class="toolbar-btn" :class="{ 'toolbar-btn-active': commandMode }" @click="commandMode = !commandMode" title="Command Center [C]">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        <span>{{ commandMode ? 'Exit CMD' : 'CMD Mode' }}</span>
+      </button>
+      <button class="toolbar-btn" :class="{ 'toolbar-btn-active': patrolRoute }" @click="patrolRoute = !patrolRoute" title="Patrol Route [R]">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        <span>{{ patrolRoute ? 'Hide Route' : 'Patrol Route' }}</span>
+      </button>
+      <button class="toolbar-btn" @click="showResourceCalc = true" title="Resource Allocation">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="8" r="4"/>
+          <path d="M20 21a8 8 0 10-16 0"/>
+        </svg>
+        <span>Resources</span>
+      </button>
+      <button class="toolbar-btn" @click="showKeyboardHints = true" title="Keyboard Shortcuts [?]">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="6" width="20" height="12" rx="2"/>
+          <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
+        </svg>
+      </button>
     </div>
   </div>
 </template>
@@ -238,4 +328,29 @@ setInterval(() => {
   opacity: 0;
   transform: translateX(30px);
 }
+/* Toolbar action buttons (top-right of top bar) */
+.toolbar-actions {
+  position: absolute; top: 10px; right: 1rem; z-index: 20;
+  display: flex; gap: 0.4rem; align-items: center;
+}
+.toolbar-btn {
+  display: flex; align-items: center; gap: 0.35rem;
+  padding: 0.35rem 0.7rem; border-radius: 7px;
+  background: rgba(15,21,32,0.85); border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-muted); font-size: 0.67rem; font-weight: 600;
+  cursor: pointer; transition: all 0.2s; backdrop-filter: blur(8px);
+}
+.toolbar-btn:hover { color: var(--text-primary); border-color: rgba(255,255,255,0.2); }
+.toolbar-btn-active { background: rgba(79,142,245,0.12) !important; border-color: rgba(79,142,245,0.35) !important; color: var(--accent-primary) !important; }
+
+/* Command mode strips side panels */
+.overlays-container.cmd-mode { padding: 0; }
+
+/* Strip slide */
+.strip-slide-enter-active, .strip-slide-leave-active { transition: transform 0.35s cubic-bezier(0.4,0,0.2,1); }
+.strip-slide-enter-from, .strip-slide-leave-to { transform: translateY(100%); }
+
+/* Modal fade */
+.modal-fade-enter-active, .modal-fade-leave-active { transition: all 0.25s; }
+.modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; transform: scale(0.96); }
 </style>

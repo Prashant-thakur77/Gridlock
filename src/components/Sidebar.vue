@@ -1,10 +1,13 @@
 <script setup>
 import { computed, ref, onMounted, watch } from 'vue';
-import { Search, AlertTriangle, Clock, MapPin, BarChart3, Bot, Sparkles, TrendingUp, Activity, Zap, Shield } from '@lucide/vue';
-import { mockHotspots, globalStats, hourlyTrend, meta } from '../mockData';
+import { Search, AlertTriangle, Clock, MapPin, BarChart3, Bot, Sparkles, TrendingUp, Activity, Zap, Shield, Radio, BookOpen, ChevronDown } from '@lucide/vue';
+import { mockHotspots, globalStats, hourlyTrend, weeklyHeatmap, dayOfWeekTrend, meta, offenceCodeLookup } from '../mockData';
 
 const props = defineProps({ timeOffset: { type: Number, default: 0 } });
 const emit = defineEmits(['select-hotspot', 'update:time-offset']);
+
+// Sidebar tabs
+const activeTab = ref('zones'); // 'zones' | 'heatmap' | 'offences'
 
 const searchQuery = ref('');
 const selectedSeverity = ref('all');
@@ -82,6 +85,30 @@ const generateInsight = () => {
   typingTimeout = setTimeout(typeChar, 200);
 };
 
+// Weekly heatmap max for normalization
+const heatmapMax = Math.max(...weeklyHeatmap.flatMap(d => d.hours.map(h => h.count)));
+const heatColor = (intensity) => {
+  if (intensity >= 80) return 'rgba(248,113,113,0.9)';
+  if (intensity >= 60) return 'rgba(251,191,36,0.8)';
+  if (intensity >= 35) return 'rgba(79,142,245,0.6)';
+  if (intensity >= 10) return 'rgba(79,142,245,0.25)';
+  return 'rgba(255,255,255,0.04)';
+};
+
+// SCITA stats from meta
+const scitaPct = meta.scitaPct;
+const scitaGap = 100 - scitaPct;
+const scitaCircum = 2 * Math.PI * 20; // r=20
+const scitaDash = (scitaPct / 100) * scitaCircum;
+const scitaGapDash = scitaCircum - scitaDash;
+
+// Offence code search
+const offenceSearch = ref('');
+const filteredOffences = computed(() => {
+  if (!offenceSearch.value) return offenceCodeLookup.slice(0, 20);
+  const q = offenceSearch.value.toLowerCase();
+  return offenceCodeLookup.filter(o => o.code.includes(q) || o.name.toLowerCase().includes(q));
+});
 onMounted(() => generateInsight());
 watch(() => props.timeOffset, () => generateInsight());
 watch(searchQuery, () => generateInsight());
@@ -257,7 +284,10 @@ watch(selectedSeverity, () => generateInsight());
               <div v-if="hs.topJunction" class="btp-code mono mt-1">{{ hs.topJunction }}</div>
               <div class="flex-row items-center justify-between mt-1">
                 <span class="hs-detail">{{ hs.violationCount.toLocaleString('en-IN') }} violations · Peak {{ hs.peakHour.toString().padStart(2,'0') }}:00</span>
-                <span class="delay-chip" :class="{ 'delay-high': hs.delayMinutes > 30 }">+{{ hs.delayMinutes }}m</span>
+                <div class="flex-row items-center gap-1">
+                  <span class="worst-day-chip" title="Worst day of week">⛔ {{ hs.worstDayShort }}</span>
+                  <span class="delay-chip" :class="{ 'delay-high': hs.delayMinutes > 30 }">+{{ hs.delayMinutes }}m</span>
+                </div>
               </div>
               <div class="mini-bar mt-1">
                 <div class="mini-fill"
@@ -268,6 +298,96 @@ watch(selectedSeverity, () => generateInsight());
             </div>
           </div>
           <div v-if="!sortedHotspots.length" class="no-results">No zones match your filter.</div>
+        </div>
+      </div>
+
+      <div class="divider" />
+
+      <!-- Weekly Day x Hour Heatmap -->
+      <div class="section-pad">
+        <div class="flex-row justify-between items-center mb-2">
+          <div class="section-label flex-row items-center gap-2">
+            <BarChart3 size="11" /><span>Day × Hour Violation Heatmap</span>
+          </div>
+          <span class="badge badge-danger">Worst: {{ meta.worstGlobalDay }} {{ meta.peakHourLabel }}</span>
+        </div>
+        <div class="weekly-heatmap">
+          <div v-for="dayData in weeklyHeatmap" :key="dayData.day" class="hm-row">
+            <div class="hm-day-label">{{ dayData.short }}</div>
+            <div
+              v-for="(cell, h) in dayData.hours"
+              :key="h"
+              class="hm-cell"
+              :style="{ background: heatColor(cell.intensity) }"
+              :title="`${dayData.day} ${h.toString().padStart(2,'0')}:00 — ${cell.count.toLocaleString('en-IN')} violations`"
+            ></div>
+          </div>
+          <div class="hm-x-labels">
+            <span class="hm-day-label" style="visibility:hidden">Mon</span>
+            <span>12a</span><span style="margin-left:auto">6a</span><span style="margin-left:auto">12p</span><span style="margin-left:auto">6p</span><span style="margin-left:auto">11p</span>
+          </div>
+        </div>
+        <div class="hm-legend flex-row items-center gap-1 mt-1">
+          <span style="font-size:0.58rem;color:var(--text-muted);">Low</span>
+          <div class="hm-grad"></div>
+          <span style="font-size:0.58rem;color:var(--text-muted);">High</span>
+        </div>
+      </div>
+
+      <div class="divider" />
+
+      <!-- SCITA Integration + Case Closure Gap -->
+      <div class="section-pad">
+        <div class="section-label flex-row items-center gap-2 mb-2">
+          <Radio size="11" /><span>SCITA Integration Status</span>
+        </div>
+        <div class="scita-row">
+          <div class="scita-ring-wrap">
+            <svg width="52" height="52" viewBox="0 0 52 52">
+              <circle cx="26" cy="26" r="20" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="5" />
+              <circle cx="26" cy="26" r="20" fill="none" stroke="#34d399" stroke-width="5"
+                :stroke-dasharray="`${scitaDash} ${scitaGapDash}`"
+                stroke-dashoffset="31.4" stroke-linecap="round" />
+            </svg>
+            <div class="scita-center mono">{{ scitaPct }}%</div>
+          </div>
+          <div class="scita-info flex-col gap-1">
+            <div class="scita-stat">
+              <span class="scita-val" style="color:var(--status-success)">{{ meta.scitaSent.toLocaleString('en-IN') }}</span>
+              <span class="scita-lbl">Records synced to SCITA</span>
+            </div>
+            <div class="scita-stat">
+              <span class="scita-val" style="color:var(--text-muted)">{{ (meta.scitaTotal - meta.scitaSent).toLocaleString('en-IN') }}</span>
+              <span class="scita-lbl">Pending sync</span>
+            </div>
+          </div>
+        </div>
+        <!-- Case Closure Gap Alert -->
+        <div class="closure-alert mt-2">
+          <div class="closure-icon">⚠️</div>
+          <div class="flex-col gap-1">
+            <div class="closure-title">System Alert: Case Closure Gap</div>
+            <div class="closure-body">0 of {{ meta.totalRows.toLocaleString('en-IN') }} violation cases have a <code>closed_datetime</code> record. {{ meta.approvedCount.toLocaleString('en-IN') }} approved violations remain officially open — a systemic accountability gap.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider" />
+
+      <!-- Offence Code Reference -->
+      <div class="section-pad pb-extra">
+        <div class="section-label flex-row items-center gap-2 mb-2">
+          <BookOpen size="11" /><span>Offence Code Reference ({{ offenceCodeLookup.length }} codes)</span>
+        </div>
+        <div class="search-wrap mb-2">
+          <Search size="11" class="search-icon-el" />
+          <input v-model="offenceSearch" placeholder="Search code or offence name..." class="search-inp" style="font-size:0.74rem;" />
+        </div>
+        <div class="offence-list">
+          <div v-for="o in filteredOffences" :key="o.code" class="offence-row">
+            <span class="offence-code mono">{{ o.code }}</span>
+            <span class="offence-name">{{ o.name }}</span>
+          </div>
         </div>
       </div>
 
@@ -417,4 +537,41 @@ watch(selectedSeverity, () => generateInsight());
 .badge-danger { background: var(--status-danger-dim); color: var(--status-danger); border: 1px solid rgba(248,113,113,0.25); }
 .badge-warning { background: var(--status-warning-dim); color: var(--status-warning); border: 1px solid rgba(251,191,36,0.25); }
 .badge-info { background: rgba(79,142,245,0.1); color: var(--accent-primary); border: 1px solid rgba(79,142,245,0.25); }
+/* Worst day chip */
+.worst-day-chip { font-size: 0.6rem; font-weight: 700; font-family: var(--font-mono); padding: 1px 5px; border-radius: 4px; background: rgba(251,191,36,0.08); color: var(--status-warning); border: 1px solid rgba(251,191,36,0.2); }
+
+/* Weekly Heatmap */
+.weekly-heatmap { display: flex; flex-direction: column; gap: 2px; }
+.hm-row { display: flex; align-items: center; gap: 2px; }
+.hm-day-label { font-size: 0.55rem; font-weight: 700; color: var(--text-muted); width: 20px; flex-shrink: 0; font-family: var(--font-mono); }
+.hm-cell { flex: 1; height: 7px; border-radius: 1px; transition: transform 0.1s; cursor: default; }
+.hm-cell:hover { transform: scale(1.3); z-index: 1; }
+.hm-x-labels { display: flex; align-items: center; font-size: 0.52rem; color: var(--text-muted); }
+.hm-legend { gap: 0.4rem; }
+.hm-grad { flex: 1; height: 4px; border-radius: 99px; background: linear-gradient(to right, rgba(79,142,245,0.15), rgba(251,191,36,0.7), rgba(248,113,113,0.9)); }
+
+/* SCITA ring */
+.scita-row { display: flex; align-items: center; gap: 1rem; }
+.scita-ring-wrap { position: relative; width: 52px; height: 52px; flex-shrink: 0; }
+.scita-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 0.7rem; font-weight: 700; color: var(--status-success); }
+.scita-info { flex: 1; }
+.scita-stat { display: flex; flex-direction: column; gap: 1px; }
+.scita-val { font-size: 0.85rem; font-weight: 700; font-family: var(--font-mono); }
+.scita-lbl { font-size: 0.6rem; color: var(--text-muted); }
+.gap-1 { gap: 0.25rem; }
+
+/* Closure alert */
+.closure-alert { background: rgba(251,191,36,0.05); border: 1px solid rgba(251,191,36,0.2); border-radius: var(--radius-md); padding: 0.65rem; display: flex; gap: 0.5rem; align-items: flex-start; }
+.closure-icon { font-size: 0.9rem; flex-shrink: 0; margin-top: 1px; }
+.closure-title { font-size: 0.72rem; font-weight: 700; color: var(--status-warning); margin-bottom: 2px; }
+.closure-body { font-size: 0.67rem; color: var(--text-muted); line-height: 1.5; }
+.closure-body code { font-family: var(--font-mono); background: rgba(255,255,255,0.07); padding: 0 3px; border-radius: 3px; font-size: 0.65rem; }
+
+/* Offence codes */
+.offence-list { display: flex; flex-direction: column; gap: 0.3rem; max-height: 200px; overflow-y: auto; }
+.offence-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0.5rem; border-radius: var(--radius-sm); background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); }
+.offence-code { font-size: 0.65rem; font-weight: 700; color: var(--accent-cyan); background: rgba(34,211,238,0.08); border: 1px solid rgba(34,211,238,0.18); padding: 1px 5px; border-radius: 3px; min-width: 28px; text-align: center; }
+.offence-name { font-size: 0.7rem; color: var(--text-secondary); }
+.pb-extra { padding-bottom: 2rem; }
+.flex-col { display: flex; flex-direction: column; }
 </style>
