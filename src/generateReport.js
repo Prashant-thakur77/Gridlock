@@ -464,18 +464,23 @@ export async function generateDetailedPDF(hotspot, allHotspots) {
   </div>
   `;
 
-  // Create container — must be in viewport for html2canvas to capture correctly
+  // Create container — Make it FULLY VISIBLE as an overlay during generation
+  // This guarantees the browser paints it and html2canvas captures it.
+  // It acts as a split-second "loading/generating" screen for the user.
   const container = document.createElement('div');
   container.style.cssText = [
     'position:absolute',
     'top:0',
     'left:0',
     'width:794px',         // ≈ 210mm at 96dpi
-    'z-index:-9999',       // keep it behind the app but visible to the browser
-    'pointer-events:none'  // don't block interaction
+    'background-color:#080c12',
+    'z-index:999999',      // Put it on top of everything
   ].join(';');
   container.innerHTML = htmlContent;
   document.body.appendChild(container);
+  
+  // Scroll to top to ensure capture area is aligned
+  window.scrollTo(0, 0);
 
   // Wait two animation frames so the browser fully lays out and paints the HTML
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
