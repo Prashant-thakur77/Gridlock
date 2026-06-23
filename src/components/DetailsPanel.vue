@@ -1,8 +1,8 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { X, Camera, AlertOctagon, TrendingUp, TrendingDown, ShieldAlert, CheckCircle2, FileDown, MapPin, Clock, Activity, Shield } from '@lucide/vue';
-import html2pdf from 'html2pdf.js';
-import { monthlyTrend, meta } from '../mockData';
+import { generateDetailedPDF } from '../generateReport';
+import { monthlyTrend, meta, mockHotspots } from '../mockData';
 
 const props = defineProps({
   hotspot: { type: Object, required: true },
@@ -89,16 +89,15 @@ const hourlyMax = computed(() => Math.max(...hourlyCounts.value));
 
 const handleDispatch = () => emit('toggle-enforcement', !props.enforcementActive);
 
-const handleExportPDF = () => {
-  const element = document.querySelector('.app-container');
-  const opt = {
-    margin: 4,
-    filename: `Gridlock_Incident_Report_${props.hotspot.name.replace(/\s+/g, '_')}.pdf`,
-    image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true },
-    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
-  };
-  html2pdf().set(opt).from(element).save();
+const isExporting = ref(false);
+const handleExportPDF = async () => {
+  if (isExporting.value) return;
+  isExporting.value = true;
+  try {
+    await generateDetailedPDF(props.hotspot, mockHotspots);
+  } finally {
+    isExporting.value = false;
+  }
 };
 
 const peakHourLabel = computed(() => {
@@ -313,8 +312,9 @@ const peakHourLabel = computed(() => {
           <component :is="enforcementActive ? CheckCircle2 : ShieldAlert" size="15" />
           <span>{{ enforcementActive ? 'Unit En Route · Tap to Recall' : 'Simulate Enforcement' }}</span>
         </button>
-        <button class="btn-pdf" @click="handleExportPDF" title="Export PDF Report">
-          <FileDown size="15" />
+        <button class="btn-pdf" @click="handleExportPDF" :disabled="isExporting" :title="isExporting ? 'Generating PDF...' : 'Export 4-page PDF Report'">
+          <span v-if="isExporting" class="pdf-spinner"></span>
+          <FileDown v-else size="15" />
         </button>
       </div>
 
@@ -477,4 +477,13 @@ const peakHourLabel = computed(() => {
 .pdf-table { font-size: 9px; width: 100%; border-collapse: collapse; }
 .pdf-table td { padding: 3px 6px; border: 1px solid #ddd; }
 .pdf-table td:first-child { font-weight: 600; background: #f5f5f5; width: 35%; }
+.btn-pdf:disabled { opacity: 0.6; cursor: wait; }
+.pdf-spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: spin-pdf 0.7s linear infinite;
+}
+@keyframes spin-pdf { to { transform: rotate(360deg); } }
 </style>
